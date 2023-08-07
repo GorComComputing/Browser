@@ -1,9 +1,17 @@
-import telnet as tl
+import browser as bw
+import tkinter
+   	
 
 if __name__ == "__main__":
     import sys
-    tl.load(sys.argv[1])
+    bw.Browser().load(sys.argv[1])
+    tkinter.mainloop()
     
 #url = "http://example.org/index.html"
 #tl.load(url)
+
+
+
+
+
 
