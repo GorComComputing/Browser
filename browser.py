@@ -49,6 +49,8 @@ class Browser:
         #self.display_list = Layout(tokens).display_list
         #print(self.display_list)
         self.draw()
+        import dukpy
+        print(dukpy.evaljs("2 + 2"))
         
         
     # Прокрутка вниз
@@ -301,7 +303,10 @@ def request(url):
 		proto=socket.IPPROTO_TCP,
 	)
 		
-	port = 80 if scheme == "http" else 443
+	if scheme == "http" and port == "":
+		port = 80  #else 443
+	if scheme == "https" and port == "":
+		port = 443 
 	
 	if scheme == "https":
 		ctx = ssl.create_default_context()
