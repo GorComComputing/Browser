@@ -8,6 +8,8 @@ WIDTH, HEIGHT = 800, 600
 HSTEP, VSTEP = 13, 18
 SCROLL_STEP = 100
 
+FONTS = {}
+
 
 # Класс браузера
 class Browser:
@@ -21,32 +23,31 @@ class Browser:
         self.canvas.pack()
         self.scroll = 0		# для прокрутки экрана
         self.window.bind("<Down>", self.scrolldown)
-        self.bi_times = tkinter.font.Font(
-            family="Times",
-            size=16,
-            weight="bold",
-            slant="italic",
-        )
 
 
     def draw(self):
     	self.canvas.delete("all")
-    	for x, y, c in self.display_list:
+    	for x, y, c, font in self.display_list:
     		if y > self.scroll + HEIGHT: continue
     		if y + VSTEP < self.scroll: continue
-    		self.canvas.create_text(x, y - self.scroll, text=c, font=self.bi_times, anchor='nw')
+    		self.canvas.create_text(x, y - self.scroll, text=c, font=font, anchor=tkinter.NE)
         
        
     # Загрузить страницу
     def load(self, url):
-        headers, body = request(url)
-        text = lex(body)
+        #headers, body = request("http://info.cern.ch/hypertext/WWW/TheProject.html")
+        #headers, body = request(url)
+        body = requestFile('index.html')
         
-        #self.canvas.create_rectangle(10, 20, 400, 300)
-        #self.canvas.create_oval(100, 100, 150, 150)
-        #self.canvas.create_text(200, 150, text="Hi!")
-        
-        self.display_list = layout(text)
+        self.nodes = HTMLParser(body).parse()
+        self.display_list = Layout(self.nodes).display_list
+
+        #nodes = HTMLParser(body).parse()
+        print_tree(self.nodes)
+
+        #tokens = lex(body)     
+        #self.display_list = Layout(tokens).display_list
+        #print(self.display_list)
         self.draw()
         
         
@@ -58,17 +59,217 @@ class Browser:
 
 # Класс токен Текст
 class Text:
-    def __init__(self, text):
+    def __init__(self, text, parent):
         self.text = text
+        self.children = []
+        self.parent = parent
+
+
+    def __repr__(self):
+        return repr(self.text)
 
 
 # Класс токен Тег
-class Tag:
-    def __init__(self, tag):
+class Element:
+    def __init__(self, tag, attributes, parent):
         self.tag = tag
+        self.attributes = attributes
+        self.children = []
+        self.parent = parent
+        
+        
+    def __repr__(self):
+        return "<" + self.tag + ">"
+
+
+# Класс макета
+class Layout:
+    def __init__(self, tree):
+        self.display_list = []
+        self.cursor_x = HSTEP
+        self.cursor_y = VSTEP
+        self.weight = "normal"
+        self.style = "roman"
+        self.size = 16
+        self.line = []
+        self.recurse(tree)
+        self.flush()
+
+
+    def word(self, word):
+        font = get_font(self.size, self.weight, self.style)
+        w = font.measure(word)
+        print(word, self.cursor_x, w, font.measure(" "), self.cursor_x + w + font.measure(" "))
+        if self.cursor_x + w >= WIDTH - HSTEP:
+            self.flush()
+            #self.cursor_y += font.metrics("linespace") * 1.25
+            #self.cursor_x = HSTEP
+        self.cursor_x += w + font.measure(" ")
+        #self.display_list.append((self.cursor_x, self.cursor_y, word, font))
+        self.line.append((self.cursor_x, word, font))
+
+
+    def flush(self):
+        if not self.line: return
+        metrics = [font.metrics() for x, word, font in self.line]
+        max_ascent = max([metric["ascent"] for metric in metrics])
+        baseline = self.cursor_y + 1.25 * max_ascent
+        for x, word, font in self.line:
+            y = baseline - font.metrics("ascent")
+            self.display_list.append((x, y, word, font))
+        self.cursor_x = HSTEP
+        self.line = []
+        max_descent = max([metric["descent"] for metric in metrics])
+        self.cursor_y = baseline + 1.25 * max_descent
+
+
+    def open_tag(self, tag):
+        if tag == "i":
+            self.style = "italic"
+        elif tag == "b":
+            self.weight = "bold"
+        elif tag == "small":
+            self.size -= 2
+        elif tag == "big":
+            self.size += 4
 
 
 
+    def close_tag(self, tag):
+        if tag == "i":
+            self.style = "roman"
+        elif tag == "b":
+            self.weight = "normal"
+        elif tag == "small":
+            self.size += 2
+        elif tag == "big":
+            self.size -= 4
+        elif tag == "p":
+            self.flush()
+            self.cursor_y += VSTEP
+        elif tag == "h1":
+            self.flush()
+            self.cursor_y += VSTEP
+        elif tag == "br":
+            self.flush()
+
+
+    def recurse(self, tree):
+        if isinstance(tree, Text):
+            for word in tree.text.split():
+                self.word(word)
+        else:
+            self.open_tag(tree.tag)
+            for child in tree.children:
+                self.recurse(child)
+            self.close_tag(tree.tag)
+
+
+# Класс парсера HTML
+class HTMLParser:
+    def __init__(self, body):
+        self.body = body
+        self.unfinished = []
+        
+    SELF_CLOSING_TAGS = [
+        "area", "base", "br", "col", "embed", "hr", "img", "input",
+        "link", "meta", "param", "source", "track", "wbr",
+    ]
+
+    HEAD_TAGS = [
+        "base", "basefont", "bgsound", "noscript",
+        "link", "meta", "title", "style", "script",
+    ]
+        
+        
+    # Отобразить страницу
+    def parse(self):
+        text = ""
+        in_tag = False
+        for c in self.body:
+            if c == "<":
+                in_tag = True
+                if text: self.add_text(text)
+                text = ""
+            elif c == ">":
+                in_tag = False
+                self.add_tag(text)
+                text = ""
+            else:
+                text += c	
+        if not in_tag and text:
+            self.add_text(text)
+        return self.finish()
+
+
+    def add_text(self, text):
+        if text.isspace(): return
+        self.implicit_tags(None)
+        parent = self.unfinished[-1]
+        node = Text(text, parent)
+        parent.children.append(node)
+        
+        
+    def add_tag(self, tag):
+        tag, attributes = self.get_attributes(tag)
+        if tag.startswith("!"): return
+        self.implicit_tags(tag)
+        if tag.startswith("/"):
+            if len(self.unfinished) == 1: return
+            node = self.unfinished.pop()
+            parent = self.unfinished[-1]
+            parent.children.append(node)
+        elif tag in self.SELF_CLOSING_TAGS:
+        	parent = self.unfinished[-1]
+        	node = Element(tag, attributes, parent)
+        	parent.children.append(node)
+        else:
+            parent = self.unfinished[-1] if self.unfinished else None
+            node = Element(tag, attributes, parent)
+            self.unfinished.append(node)
+        
+    
+    def finish(self):
+        if len(self.unfinished) == 0:
+            self.add_tag("html")
+        while len(self.unfinished) > 1:
+            node = self.unfinished.pop()
+            parent = self.unfinished[-1]
+            parent.children.append(node)
+        return self.unfinished.pop()
+        
+        
+    def get_attributes(self, text):
+        parts = text.split()
+        tag = parts[0].lower()
+        attributes = {}
+        for attrpair in parts[1:]:
+            if "=" in attrpair:
+                key, value = attrpair.split("=", 1)
+                attributes[key.lower()] = value
+                if len(value) > 2 and value[0] in ["'", "\""]:
+                    value = value[1:-1]
+            else:
+                attributes[attrpair.lower()] = ""
+        return tag, attributes
+        
+        
+    def implicit_tags(self, tag):
+        while True:
+            open_tags = [node.tag for node in self.unfinished]
+            if open_tags == [] and tag != "html":
+                self.add_tag("html")
+            elif open_tags == ["html"] and tag not in ["head", "body", "/html"]:
+                if tag in self.HEAD_TAGS:
+                    self.add_tag("head")
+                else:
+                    self.add_tag("body")
+            elif open_tags == ["html", "head"] and tag not in ["/head"] + self.HEAD_TAGS:
+                self.add_tag("/head")
+            else:
+                break
+        
+        
 # Парсинг URL
 def parse_url(url):
 	scheme, url = url.split("://", 1)
@@ -138,46 +339,26 @@ def request(url):
 	return headers, body
     
     
-# Отобразить страницу
-def lex(body):
-	out = []
-	text = ""
-	in_tag = False
-	for c in body:
-		if c == "<":
-			in_tag = True
-			if text: out.append(Text(text))
-			text = ""
-		elif c == ">":
-			in_tag = False
-			out.append(Tag(text))
-			text = ""
-		else:
-		#elif not in_angle:
-			print(c, end="")
-			text += c	
-	if not in_tag and text:
-		out.append(Text(text))
-	return out
-		
-	
-# Добавляет символ в список
-def layout(text):
-    display_list = []
-    cursor_x, cursor_y = HSTEP, VSTEP
-    #for c in text:
-    for tok in tokens:
-        if isinstance(tok, Text):
-            for word in tok.text.split():
-    			#self.canvas.create_text(cursor_x, cursor_y, text=c)
-        		display_list.append((cursor_x, cursor_y, c))
-        		cursor_x += HSTEP
-        		if cursor_x >= WIDTH - HSTEP:
-            		cursor_y += VSTEP
-            		cursor_x = HSTEP
-    return display_list
+# Чтение из файла
+def requestFile(name):
+	f = open(name)
+	body = f.read()
+	print(body)
+	return body
+    		
+
+def get_font(size, weight, slant):
+    key = (size, weight, slant)
+    if key not in FONTS:
+        font = tkinter.font.Font(size=size, weight=weight, slant=slant)
+        FONTS[key] = font
+    return FONTS[key]
 
 
+def print_tree(node, indent=0):
+    print(" " * indent, node)
+    for child in node.children:
+        print_tree(child, indent + 2)
 
 
 
